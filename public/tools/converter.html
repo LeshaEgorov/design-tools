@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru" class="tool-page">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Конвертер JPG/PNG → WebP — Design Tools</title>
+    <link rel="stylesheet" href="/assets/css/style.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <header>
+      <div class="container">
+        <nav>
+          <div class="logo">Design Tools</div>
+          <ul>
+            <li><a href="/">Главная</a></li>
+            <li><a href="/tools/compressor.html">Компрессор</a></li>
+            <li><a href="/tools/converter.html">Конвертер</a></li>
+          </ul>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <div class="container">
+        <div class="tool-header">
+          <h1>Конвертер JPG/PNG → WebP</h1>
+          <p>
+            Перетяните изображения и получите современный WebP-файл. Конвертация проходит в браузере,
+            без отправки изображений на сторонние сервисы.
+          </p>
+        </div>
+
+        <section>
+          <div id="dropzone" class="dropzone">
+            <input id="fileInput" type="file" accept="image/png,image/jpeg" multiple />
+            <h3>Перетащите файлы сюда или нажмите для выбора</h3>
+            <p>Поддержка форматов PNG и JPG. Вставка из буфера и множественный выбор доступны.</p>
+          </div>
+          <div id="uploadAlert" class="alert" hidden></div>
+        </section>
+
+        <section>
+          <div id="fileList" class="file-list"></div>
+          <div class="download-all" id="downloadAllContainer" hidden>
+            <a class="btn" id="downloadAll" href="#">Скачать всё (ZIP)</a>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer>
+      <div class="container">
+        © <span data-current-year></span> Design Tools
+      </div>
+    </footer>
+
+    <script src="/assets/js/main.js" defer></script>
+    <script src="/assets/js/upload.js" defer></script>
+    <script src="/assets/js/converter.js" defer></script>
+  </body>
+</html>
