@@ -1,275 +1,352 @@
-const fileInput = document.getElementById("fileInput");
-const algorithmSelect = document.getElementById("algorithmSelect");
-const statusEl = document.getElementById("status");
-const originalPreview = document.getElementById("originalPreview");
-const compressedPreview = document.getElementById("compressedPreview");
-const originalMeta = document.getElementById("originalMeta");
-const compressedMeta = document.getElementById("compressedMeta");
-const downloadLink = document.getElementById("downloadLink");
+const form = document.getElementById("generationForm");
+const promptInput = document.getElementById("prompt");
+const qualityInput = document.getElementById("quality");
+const qualityValue = document.getElementById("qualityValue");
+const formStatus = document.getElementById("formStatus");
+const submitButton = document.getElementById("submitButton");
+const refreshButton = document.getElementById("refreshButton");
+const jobsList = document.getElementById("jobsList");
+const jobsEmptyState = document.getElementById("jobsEmptyState");
+const jobTemplate = document.getElementById("jobTemplate");
 
-let originalImageElement = null;
-let originalDataUrl = null;
-let currentBlobUrl = null;
-let currentBlob = null;
-let currentFile = null;
+const jobsState = new Map();
+const pollingTimers = new Map();
 
-fileInput.addEventListener("change", handleFileSelect);
-algorithmSelect.addEventListener("change", () => processCurrentImage());
+const QUALITY_LABELS = {
+  1: "Draft ×1.0",
+  2: "HQ ×1.5",
+  3: "Ultra ×2.0",
+  4: "Max ×2.5",
+};
 
-downloadLink.addEventListener("click", (event) => {
-  if (downloadLink.hasAttribute("disabled")) {
-    event.preventDefault();
+updateQualityLabel();
+
+qualityInput.addEventListener("input", updateQualityLabel);
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const formData = new FormData(form);
+  const prompt = formData.get("prompt").trim();
+  const negativePrompt = formData.get("negativePrompt").trim();
+
+  if (!prompt) {
+    formStatus.textContent = "Введите подсказку для генерации";
+    promptInput.focus();
+    return;
+  }
+
+  const payload = {
+    prompt,
+    negativePrompt: negativePrompt || undefined,
+    type: formData.get("type"),
+    style: formData.get("style"),
+    aspectRatio: formData.get("aspectRatio"),
+    quality: Number(formData.get("quality")),
+    remix: formData.get("remix") === "on",
+  };
+
+  try {
+    toggleForm(false);
+    formStatus.textContent = "Отправляем запрос в Midjourney…";
+
+    const response = await fetch("generate.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || "Не удалось создать генерацию");
+    }
+
+    const jobId = data.jobId || data.id;
+    if (!jobId) {
+      throw new Error("API не вернул идентификатор задания");
+    }
+
+    const job = {
+      id: jobId,
+      prompt,
+      type: payload.type,
+      style: payload.style,
+      aspectRatio: payload.aspectRatio,
+      status: data.status || "queued",
+      message: data.message || "Отправлено в очередь",
+      createdAt: new Date(),
+    };
+
+    registerJob(job);
+    formStatus.textContent = "Задача создана. Следим за прогрессом…";
+    form.reset();
+    updateQualityLabel();
+    pollJob(job.id, true);
+  } catch (error) {
+    console.error(error);
+    formStatus.textContent = error.message || "Не удалось выполнить запрос";
+  } finally {
+    toggleForm(true);
   }
 });
 
-function resetCompressedPreview() {
-  if (currentBlobUrl) {
-    URL.revokeObjectURL(currentBlobUrl);
-    currentBlobUrl = null;
-  }
-  compressedPreview.removeAttribute("src");
-  compressedMeta.textContent = "";
-  downloadLink.setAttribute("disabled", "true");
-  downloadLink.setAttribute("aria-disabled", "true");
-  downloadLink.href = "#";
-}
-
-function setStatus(message, type = "info") {
-  statusEl.textContent = message;
-  statusEl.classList.remove("error", "success");
-  if (type === "error") {
-    statusEl.classList.add("error");
-  } else if (type === "success") {
-    statusEl.classList.add("success");
-  }
-}
-
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes)) return "";
-  if (bytes === 0) return "0 Б";
-  const units = ["Б", "КБ", "МБ", "ГБ"];
-  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  const value = bytes / Math.pow(1024, exponent);
-  return `${value.toFixed(value < 10 && exponent > 0 ? 2 : 1)} ${units[exponent]}`;
-}
-
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
-    reader.readAsDataURL(file);
+refreshButton.addEventListener("click", () => {
+  jobsState.forEach((job) => {
+    pollJob(job.id, true);
   });
+});
+
+function updateQualityLabel() {
+  const value = Number(qualityInput.value || 2);
+  qualityValue.textContent = QUALITY_LABELS[value] || "Custom";
 }
 
-async function loadImageElement(dataUrl) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Файл не распознан как изображение"));
-    img.src = dataUrl;
-  });
+function toggleForm(enabled) {
+  submitButton.disabled = !enabled;
+  form.classList.toggle("is-loading", !enabled);
 }
 
-function getCanvasFromImage(image) {
-  const width = image.naturalWidth || image.videoWidth || image.width;
-  const height = image.naturalHeight || image.videoHeight || image.height;
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(image, 0, 0, width, height);
-  return { canvas, ctx, width, height };
-}
-
-async function handleFileSelect(event) {
-  const file = event.target.files && event.target.files[0];
-  resetCompressedPreview();
-  algorithmSelect.disabled = true;
-  originalImageElement = null;
-  originalDataUrl = null;
-  currentBlob = null;
-  currentFile = null;
-
-  if (!file) {
-    originalPreview.removeAttribute("src");
-    originalMeta.textContent = "";
-    setStatus("Файл не выбран");
+function registerJob(job) {
+  const existing = jobsState.get(job.id);
+  if (existing) {
+    existing.data = { ...existing.data, ...job };
+    updateJobCard(existing.element, existing.data);
     return;
   }
 
-  if (!file.type.startsWith("image/")) {
-    originalPreview.removeAttribute("src");
-    originalMeta.textContent = "";
-    setStatus("Пожалуйста, выберите файл изображения", "error");
-    return;
-  }
-
-  try {
-    setStatus("Загрузка изображения...");
-    const dataUrl = await readFileAsDataUrl(file);
-    originalPreview.src = dataUrl;
-    originalPreview.alt = file.name;
-    originalDataUrl = dataUrl;
-    originalImageElement = await loadImageElement(dataUrl);
-    currentFile = file;
-
-    const { width, height } = getCanvasFromImage(originalImageElement);
-    originalMeta.textContent = `${file.name} • ${width}×${height}px • ${formatBytes(file.size)}`;
-
-    algorithmSelect.disabled = false;
-    setStatus("Выберите алгоритм сжатия");
-    await processCurrentImage();
-  } catch (error) {
-    console.error(error);
-    setStatus(error.message || "Произошла ошибка при обработке файла", "error");
-  }
+  const card = createJobCard(job);
+  jobsState.set(job.id, { data: job, element: card });
+  jobsEmptyState.hidden = true;
 }
 
-async function processCurrentImage() {
-  if (!originalImageElement || !originalDataUrl) {
-    return;
-  }
+function createJobCard(job) {
+  const fragment = jobTemplate.content.cloneNode(true);
+  const card = fragment.querySelector(".job-card");
+  const title = card.querySelector(".job-card__title");
+  const meta = card.querySelector(".job-card__meta");
+  title.textContent = job.prompt.length > 120 ? `${job.prompt.slice(0, 117)}…` : job.prompt;
+  meta.textContent = formatMeta(job);
+  updateJobCard(card, job);
+  jobsList.prepend(card);
+  return card;
+}
 
-  const algorithm = algorithmSelect.value;
-  resetCompressedPreview();
-  setStatus("Выполняется сжатие...");
+function updateJobCard(card, job) {
+  card.dataset.status = job.status;
+  card.querySelector(".job-card__status").textContent = statusLabel(job.status);
+  card.querySelector(".job-card__message").textContent = job.message || "";
 
-  try {
-    const { canvas, ctx, width, height } = getCanvasFromImage(originalImageElement);
-    if (algorithm !== "lossless") {
-      const imageData = ctx.getImageData(0, 0, width, height);
-      const processed = await applyAlgorithm(imageData, algorithm);
-      ctx.putImageData(processed, 0, 0);
-    }
+  const progressBar = card.querySelector(".job-card__progress-bar span");
+  const progress = job.progress != null ? job.progress : inferProgress(job.status);
+  progressBar.style.transform = `scaleX(${Math.max(0.1, progress / 100)})`;
 
-    const blob = await canvasToBlob(canvas, "image/png");
-    currentBlob = blob;
-    const fileName = buildFileName(currentFile ? currentFile.name : "image", algorithm);
-    currentBlobUrl = URL.createObjectURL(blob);
-    compressedPreview.src = currentBlobUrl;
-    compressedPreview.alt = fileName;
+  const meta = card.querySelector(".job-card__meta");
+  meta.textContent = formatMeta(job);
 
-    let ratioText = "";
-    if (currentFile && currentFile.size) {
-      const ratio = currentFile.size > 0 ? ((blob.size / currentFile.size) * 100).toFixed(1) : "-";
-      ratioText = ` • ${formatBytes(blob.size)} (${ratio}% от оригинала)`;
+  const link = card.querySelector("a");
+  const cancelButton = card.querySelector("[data-cancel]");
+  const mediaBlock = card.querySelector(".job-card__media");
+  const img = mediaBlock.querySelector("img");
+  const video = mediaBlock.querySelector("video");
+  const caption = mediaBlock.querySelector("figcaption");
+
+  if (job.status === "completed" && job.result) {
+    const { imageUrl, videoUrl, text } = job.result;
+    mediaBlock.hidden = false;
+    caption.textContent = text || "Готово";
+
+    if (imageUrl) {
+      img.src = imageUrl;
+      img.hidden = false;
     } else {
-      ratioText = ` • ${formatBytes(blob.size)}`;
+      img.hidden = true;
     }
 
-    compressedMeta.textContent = `${fileName} • ${width}×${height}px${ratioText}`;
-    downloadLink.removeAttribute("disabled");
-    downloadLink.removeAttribute("aria-disabled");
-    downloadLink.href = currentBlobUrl;
-    downloadLink.download = fileName;
+    if (videoUrl) {
+      video.src = videoUrl;
+      video.hidden = false;
+    } else {
+      video.hidden = true;
+    }
 
-    const statusText =
-      ratioText && currentFile && currentFile.size
-        ? `Сжатие выполнено успешно • ${formatBytes(blob.size)} (${(
-            (blob.size / currentFile.size) * 100
-          ).toFixed(1)}% от оригинала)`
-        : `Сжатие выполнено успешно • ${formatBytes(blob.size)}`;
-    setStatus(statusText, "success");
+    if (!imageUrl && !videoUrl) {
+      mediaBlock.hidden = true;
+    }
+
+    if (imageUrl || videoUrl) {
+      link.hidden = false;
+      link.href = imageUrl || videoUrl;
+      link.textContent = "Открыть результат";
+    } else if (job.resultUrl) {
+      link.hidden = false;
+      link.href = job.resultUrl;
+      link.textContent = "Открыть результат";
+    }
+  } else {
+    mediaBlock.hidden = true;
+    img.hidden = true;
+    video.hidden = true;
+    caption.textContent = "";
+    link.hidden = true;
+  }
+
+  cancelButton.hidden = job.status !== "queued" && job.status !== "processing";
+  cancelButton.onclick = () => cancelJob(job.id);
+}
+
+function formatMeta(job) {
+  const typeLabel = job.type === "video" ? "Видео" : "Изображение";
+  const time = job.createdAt ? formatTime(job.createdAt) : "";
+  const ratio = job.aspectRatio || "";
+  const details = [typeLabel, ratio, job.style ? `стиль ${job.style}` : null, time].filter(Boolean);
+  return details.join(" • ");
+}
+
+function formatTime(date) {
+  try {
+    const intl = new Intl.DateTimeFormat("ru", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    return intl.format(date instanceof Date ? date : new Date(date));
+  } catch (error) {
+    return "";
+  }
+}
+
+function statusLabel(status) {
+  switch (status) {
+    case "queued":
+      return "В очереди";
+    case "processing":
+      return "Обработка";
+    case "completed":
+      return "Готово";
+    case "failed":
+      return "Ошибка";
+    case "canceled":
+      return "Отменено";
+    default:
+      return status || "Неизвестно";
+  }
+}
+
+function inferProgress(status) {
+  switch (status) {
+    case "queued":
+      return 15;
+    case "processing":
+      return 55;
+    case "completed":
+      return 100;
+    case "failed":
+    case "canceled":
+      return 0;
+    default:
+      return 25;
+  }
+}
+
+async function pollJob(jobId, resetTimer = false) {
+  if (resetTimer) {
+    clearPolling(jobId);
+  }
+
+  const entry = jobsState.get(jobId);
+  if (!entry) return;
+  const { data, element } = entry;
+
+  if (data.status === "completed" || data.status === "failed" || data.status === "canceled") {
+    clearPolling(jobId);
+    return;
+  }
+
+  try {
+    const response = await fetch(`generate.php?jobId=${encodeURIComponent(jobId)}`);
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "Не удалось получить статус");
+    }
+
+    const updated = normalizeJobPayload(payload, data);
+    jobsState.set(jobId, { data: updated, element });
+    updateJobCard(element, updated);
+
+    if (updated.status === "completed" || updated.status === "failed" || updated.status === "canceled") {
+      clearPolling(jobId);
+      return;
+    }
+
+    schedulePolling(jobId);
   } catch (error) {
     console.error(error);
-    setStatus(error.message || "Не удалось создать PNG", "error");
+    data.message = error.message;
+    data.status = data.status || "failed";
+    updateJobCard(element, data);
+    clearPolling(jobId);
   }
 }
 
-function canvasToBlob(canvas, type) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) {
-        resolve(blob);
-      } else {
-        reject(new Error("Не удалось получить данные изображения"));
-      }
-    }, type);
-  });
+function normalizeJobPayload(payload, prev) {
+  const result = { ...prev };
+  result.status = payload.status || prev.status || "queued";
+  result.message = payload.message || prev.message;
+  result.progress = payload.progress ?? payload.percentage ?? prev.progress;
+  result.resultUrl = payload.result_url || payload.resultUrl || prev.resultUrl;
+
+  if (payload.result) {
+    const images = payload.result.images || payload.result.image_urls || payload.result.urls;
+    const videos = payload.result.videos || payload.result.video_urls;
+    const imageUrl = Array.isArray(images) ? images[0] : payload.result.image_url || null;
+    const videoUrl = Array.isArray(videos) ? videos[0] : payload.result.video_url || null;
+    const text = payload.result.text || payload.result.description || null;
+    result.result = { imageUrl, videoUrl, text };
+  } else if (payload.imageUrl || payload.videoUrl) {
+    result.result = {
+      imageUrl: payload.imageUrl || null,
+      videoUrl: payload.videoUrl || null,
+      text: payload.text || null,
+    };
+  }
+
+  return result;
 }
 
-async function applyAlgorithm(imageData, algorithm) {
-  switch (algorithm) {
-    case "quantize256":
-      return applyQuantization(imageData, 256, false);
-    case "quantize128":
-      return applyQuantization(imageData, 128, true);
-    case "posterize":
-      return applyPosterize(imageData, 4);
-    case "grayscale":
-      return applyGrayscale(imageData);
-    default:
-      return imageData;
+function schedulePolling(jobId) {
+  clearPolling(jobId);
+  const timer = setTimeout(() => pollJob(jobId), 3500);
+  pollingTimers.set(jobId, timer);
+}
+
+function clearPolling(jobId) {
+  const timer = pollingTimers.get(jobId);
+  if (timer) {
+    clearTimeout(timer);
+    pollingTimers.delete(jobId);
   }
 }
 
-async function applyQuantization(imageData, colorCount, useDithering) {
-  if (!window.iq || !iq.utils || !iq.palette) {
-    throw new Error("Библиотека квантования цветов еще не загрузилась");
+async function cancelJob(jobId) {
+  try {
+    const response = await fetch("generate.php", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Не удалось отменить задачу");
+    }
+    pollJob(jobId, true);
+  } catch (error) {
+    console.error(error);
+    alert(error.message);
   }
-
-  const distance = new iq.distance.EuclideanBT709NoAlpha();
-  const pointContainer = iq.utils.PointContainer.fromUint8Array(
-    imageData.data,
-    imageData.width,
-    imageData.height
-  );
-
-  const paletteQuantizer = colorCount > 128
-    ? new iq.palette.NeuQuant(distance, colorCount)
-    : new iq.palette.WuQuant(distance, colorCount);
-
-  const palette = paletteQuantizer.quantize(pointContainer);
-
-  let imageQuantizer;
-  if (useDithering) {
-    imageQuantizer = new iq.image.ErrorDiffusionArray(
-      distance,
-      iq.image.ErrorDiffusionArrayKernel.FloydSteinberg,
-      true
-    );
-  } else {
-    imageQuantizer = new iq.image.NearestColor(distance);
-  }
-
-  const quantized = imageQuantizer.quantize(pointContainer, palette);
-  const outArray = quantized.toUint8Array();
-  return new ImageData(new Uint8ClampedArray(outArray), imageData.width, imageData.height);
-}
-
-function applyPosterize(imageData, bits) {
-  const levels = Math.pow(2, bits);
-  const step = 255 / (levels - 1);
-  const data = new Uint8ClampedArray(imageData.data);
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = Math.round(data[i] / step) * step;
-    data[i + 1] = Math.round(data[i + 1] / step) * step;
-    data[i + 2] = Math.round(data[i + 2] / step) * step;
-    // альфа-канал не меняем
-  }
-  return new ImageData(data, imageData.width, imageData.height);
-}
-
-function applyGrayscale(imageData) {
-  const data = new Uint8ClampedArray(imageData.data);
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const gray = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
-    data[i] = data[i + 1] = data[i + 2] = gray;
-  }
-  return new ImageData(data, imageData.width, imageData.height);
-}
-
-function buildFileName(originalName, algorithm) {
-  const baseName = originalName.replace(/\.[^.]+$/, "");
-  return `${baseName}-${algorithm}.png`;
 }
 
 window.addEventListener("beforeunload", () => {
-  if (currentBlobUrl) {
-    URL.revokeObjectURL(currentBlobUrl);
-  }
+  pollingTimers.forEach((timer) => clearTimeout(timer));
+  pollingTimers.clear();
 });

@@ -3,68 +3,171 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PNG Компрессор</title>
+    <title>Midjourney Silent Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="styles.css" />
-    <script defer src="https://cdn.jsdelivr.net/npm/image-q@4/dist/iq.min.js"></script>
     <script defer src="script.js"></script>
   </head>
   <body>
-    <header class="app-header">
-      <h1>PNG Компрессор</h1>
-      <p>
-        Загрузите любое графическое изображение, выберите алгоритм сжатия и получите PNG
-        с сохранением прозрачности.
-      </p>
-    </header>
-
-    <main class="app">
-      <section class="controls">
-        <label class="file-input">
-          <span class="file-label">Выберите файл изображения</span>
-          <input id="fileInput" type="file" accept="image/*" />
-        </label>
-
-        <div class="algorithm-control">
-          <label for="algorithmSelect">Алгоритм сжатия</label>
-          <select id="algorithmSelect" disabled>
-            <option value="lossless">Без изменений (lossless PNG)</option>
-            <option value="quantize256">Палитра 256 цветов (нейроквантование)</option>
-            <option value="quantize128">Палитра 128 цветов + дизеринг</option>
-            <option value="posterize">Постеризация (4 бита на канал)</option>
-            <option value="grayscale">Градации серого</option>
-          </select>
+    <div class="app-shell">
+      <header class="hero">
+        <div class="hero__text">
+          <h1>Midjourney Silent Studio</h1>
+          <p>
+            Современный интерфейс для «тихой» генерации изображений и видео через Midjourney API.
+            Поддерживается автоматический stealth-режим и отслеживание прогресса заявок в реальном времени.
+          </p>
         </div>
+        <div class="hero__badge">Stealth mode ✓</div>
+      </header>
 
-        <div class="status" id="status">Файл не выбран</div>
-      </section>
+      <main class="layout">
+        <section class="panel panel--form">
+          <h2>Создать новую генерацию</h2>
+          <form id="generationForm" autocomplete="off">
+            <label class="field">
+              <span class="field__label">Основная подсказка</span>
+              <textarea
+                id="prompt"
+                name="prompt"
+                rows="4"
+                placeholder="Например: Futuristic city at golden hour, cinematic lighting, ultra detailed"
+                required
+              ></textarea>
+              <span class="field__hint">Опишите сцену максимально конкретно. Поддерживается drag & drop текста.</span>
+            </label>
 
-      <section class="preview">
-        <div class="preview-column">
-          <h2>Оригинал</h2>
-          <div class="preview-frame">
-            <img id="originalPreview" alt="Оригинальное изображение" />
+            <label class="field">
+              <span class="field__label">Негативная подсказка (опционально)</span>
+              <input
+                id="negativePrompt"
+                name="negativePrompt"
+                type="text"
+                placeholder="Например: no text, no watermark, no grain"
+              />
+            </label>
+
+            <div class="field field--inline">
+              <label class="field">
+                <span class="field__label">Тип</span>
+                <div class="segmented">
+                  <label class="segmented__option">
+                    <input type="radio" name="type" value="image" checked />
+                    <span>Изображение</span>
+                  </label>
+                  <label class="segmented__option">
+                    <input type="radio" name="type" value="video" />
+                    <span>Видео</span>
+                  </label>
+                </div>
+              </label>
+              <label class="field">
+                <span class="field__label">Стиль</span>
+                <select id="style" name="style">
+                  <option value="default">Midjourney Default</option>
+                  <option value="niji">Niji (аниме)</option>
+                  <option value="photographic">Photographic realism</option>
+                  <option value="cinematic">Cinematic</option>
+                  <option value="illustration">Illustration</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="field field--inline">
+              <label class="field">
+                <span class="field__label">Соотношение сторон</span>
+                <select id="aspectRatio" name="aspectRatio">
+                  <option value="1:1">1:1 Квадрат</option>
+                  <option value="3:2">3:2 Фото</option>
+                  <option value="16:9">16:9 Широкий</option>
+                  <option value="9:16">9:16 Вертикальный</option>
+                  <option value="21:9">21:9 Кино</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="field__label">Качество</span>
+                <input
+                  type="range"
+                  id="quality"
+                  name="quality"
+                  min="1"
+                  max="4"
+                  value="2"
+                  step="1"
+                />
+                <div class="field__hint" id="qualityValue">HQ ×1.5</div>
+              </label>
+            </div>
+
+            <label class="field field--switch">
+              <input type="checkbox" id="remix" name="remix" />
+              <span class="field__label">Включить Remix mode</span>
+              <span class="field__hint">Позволяет варьировать параметры между вариациями (при поддержке тарифом).</span>
+            </label>
+
+            <button type="submit" class="button" id="submitButton">Запустить генерацию</button>
+            <p class="form-status" id="formStatus" role="status"></p>
+          </form>
+        </section>
+
+        <aside class="panel panel--info">
+          <h2>Как это работает</h2>
+          <ol class="steps">
+            <li>Заполните подсказку и выберите тип медиа.</li>
+            <li>Нажмите «Запустить генерацию» — запрос уйдёт в Midjourney API с параметром <code>stealth: true</code>.</li>
+            <li>Отслеживайте прогресс в разделе «Активные задачи» и скачивайте результат.</li>
+          </ol>
+          <div class="info-card">
+            <h3>Статус API</h3>
+            <p>
+              Ключ хранится на сервере и не логируется. Все запросы выполняются через <code>generate.php</code>, который проксирует
+              Midjourney API и автоматически добавляет флаг stealth.
+            </p>
+            <p class="info-card__note">Если кнопка остаётся серой, проверьте ключ и права тарифа.</p>
           </div>
-          <div class="file-meta" id="originalMeta"></div>
-        </div>
+        </aside>
+      </main>
 
-        <div class="preview-column">
-          <h2>Результат</h2>
-          <div class="preview-frame">
-            <img id="compressedPreview" alt="Сжатое изображение" />
-          </div>
-          <div class="file-meta" id="compressedMeta"></div>
-          <a id="downloadLink" class="download-button" href="#" download disabled>
-            Скачать PNG
-          </a>
+      <section class="panel panel--wide">
+        <div class="panel__header">
+          <h2>Активные задачи</h2>
+          <button class="button button--ghost" id="refreshButton" type="button">Обновить все</button>
         </div>
+        <div id="jobsEmptyState" class="empty-state">
+          <p>Запустите генерацию, чтобы увидеть здесь прогресс и готовые результаты.</p>
+        </div>
+        <div id="jobsList" class="jobs"></div>
       </section>
-    </main>
+    </div>
 
-    <footer class="app-footer">
-      <p>
-        Поддерживаются форматы PNG, JPEG, WebP, GIF, BMP и другие изображения, которые
-        поддерживает ваш браузер.
-      </p>
-    </footer>
+    <template id="jobTemplate">
+      <article class="job-card" data-status="queued">
+        <header class="job-card__header">
+          <div>
+            <h3 class="job-card__title"></h3>
+            <p class="job-card__meta"></p>
+          </div>
+          <span class="job-card__status">В очереди</span>
+        </header>
+        <div class="job-card__progress">
+          <div class="job-card__progress-bar"><span></span></div>
+          <p class="job-card__message"></p>
+        </div>
+        <figure class="job-card__media" hidden>
+          <img alt="Предпросмотр результата" loading="lazy" />
+          <video controls preload="metadata" hidden></video>
+          <figcaption></figcaption>
+        </figure>
+        <footer class="job-card__footer">
+          <a class="button button--ghost" href="#" target="_blank" rel="noopener" hidden>Открыть результат</a>
+          <button type="button" class="button button--danger" data-cancel hidden>Отменить</button>
+        </footer>
+      </article>
+    </template>
   </body>
 </html>
